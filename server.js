@@ -11,6 +11,8 @@ import appointmentRoutes from './routes/appointmentRoutes.js'
 import questionRoutes from './routes/questionRoutes.js'
 import chatbotRoutes from './routes/chatbotRoutes.js'
 import adminRoutes from './routes/adminRoutes.js'
+import doctorRoutes from './routes/doctorRoutes.js'
+import patientRoutes from './routes/patientRoutes.js'
 
 // Load environment variables
 dotenv.config()
@@ -26,7 +28,7 @@ app.use(helmet({
 // CORS configuration - support multiple origins
 const allowedOrigins = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-  : ['https://frontend-quanlyphongkham.vercel.app']
+  : ['http://localhost:3000']
 
 console.log('🔒 Allowed CORS origins:', allowedOrigins)
 
@@ -72,6 +74,8 @@ app.use('/api/appointments', appointmentRoutes)
 app.use('/api/questions', questionRoutes)
 app.use('/api/chatbot', chatbotRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/doctor', doctorRoutes)
+app.use('/api/patient', patientRoutes)
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -1,6 +1,7 @@
 import express from 'express'
 import Question from '../models/Question.js'
 import googleSheetsService from '../services/googleSheets.js'
+import { protect, authorize } from '../middleware/auth.js'
 
 const router = express.Router()
 
@@ -48,7 +49,7 @@ router.post('/', async (req, res) => {
 })
 
 // Get all questions (admin)
-router.get('/', async (req, res) => {
+router.get('/', protect, async (req, res) => {
   try {
     const { status } = req.query
     const filter = status ? { status } : {}
@@ -72,7 +73,7 @@ router.get('/', async (req, res) => {
 })
 
 // Get single question
-router.get('/:id', async (req, res) => {
+router.get('/:id', protect, async (req, res) => {
   try {
     const question = await Question.findById(req.params.id)
 
@@ -97,7 +98,7 @@ router.get('/:id', async (req, res) => {
 })
 
 // Update question (answer)
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', protect, authorize('admin'), async (req, res) => {
   try {
     const { answer, status } = req.body
 
@@ -133,7 +134,7 @@ router.patch('/:id', async (req, res) => {
 })
 
 // Delete question
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', protect, authorize('admin'), async (req, res) => {
   try {
     const question = await Question.findByIdAndDelete(req.params.id)
 

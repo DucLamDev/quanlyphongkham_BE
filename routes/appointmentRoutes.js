@@ -1,5 +1,6 @@
 import express from 'express'
 import Appointment from '../models/Appointment.js'
+import Doctor from '../models/Doctor.js'
 import googleSheetsService from '../services/googleSheets.js'
 import smsService from '../services/smsService.js'
 
@@ -8,7 +9,7 @@ const router = express.Router()
 // Create new appointment
 router.post('/', async (req, res) => {
   try {
-    const { fullName, phone, email, specialty, appointmentDate, appointmentTime, notes } = req.body
+    const { fullName, phone, email, specialty, appointmentDate, appointmentTime, notes, doctorId } = req.body
 
     // Validate required fields
     if (!fullName || !phone || !specialty || !appointmentDate || !appointmentTime) {
@@ -18,12 +19,70 @@ router.post('/', async (req, res) => {
       })
     }
 
+    let assignedDoctor = null
+
+    // If doctor is selected, check availability
+    if (doctorId) {
+      const doctor = await Doctor.findById(doctorId)
+      if (!doctor || !doctor.isActive) {
+        return res.status(400).json({
+          success: false,
+          message: 'Bác sĩ không tồn tại hoặc không còn hoạt động'
+        })
+      }
+
+      // Check if doctor is available at this time
+      const existingAppointments = await Appointment.countDocuments({
+        doctorId: doctorId,
+        appointmentDate: appointmentDate,
+        appointmentTime: appointmentTime,
+        status: { $in: ['pending', 'confirmed'] }
+      })
+
+      if (existingAppointments > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Bác sĩ ${doctor.name} đã có lịch hẹn vào thời gian này. Vui lòng chọn giờ khác hoặc bác sĩ khác.`
+        })
+      }
+
+      assignedDoctor = doctor
+    } else {
+      // Random assign doctor from the specialty
+      const availableDoctors = await Doctor.find({
+        specialty: specialty,
+        isActive: true
+      })
+
+      if (availableDoctors.length > 0) {
+        // Filter out doctors who are busy at this time
+        const freeDoctors = []
+        for (const doctor of availableDoctors) {
+          const busyCount = await Appointment.countDocuments({
+            doctorId: doctor._id,
+            appointmentDate: appointmentDate,
+            appointmentTime: appointmentTime,
+            status: { $in: ['pending', 'confirmed'] }
+          })
+          if (busyCount === 0) {
+            freeDoctors.push(doctor)
+          }
+        }
+
+        // Random pick from free doctors, or from all if all are busy
+        const doctorPool = freeDoctors.length > 0 ? freeDoctors : availableDoctors
+        assignedDoctor = doctorPool[Math.floor(Math.random() * doctorPool.length)]
+      }
+    }
+
     // Create appointment in MongoDB
     const appointment = new Appointment({
       fullName,
       phone,
       email,
       specialty,
+      doctorId: assignedDoctor?._id || null,
+      doctorName: assignedDoctor?.name || null,
       appointmentDate,
       appointmentTime,
       notes,
@@ -31,7 +90,7 @@ router.post('/', async (req, res) => {
     })
 
     await appointment.save()
-    console.log('✅ Appointment saved to MongoDB')
+    console.log('✅ Appointment saved to MongoDB', assignedDoctor ? `with doctor: ${assignedDoctor.name}` : 'without doctor')
 
     // Save to Google Sheets (async, don't wait)
     googleSheetsService.appendAppointment(appointment.toObject())
@@ -72,6 +131,49 @@ router.get('/', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Có lỗi xảy ra khi lấy danh sách lịch hẹn'
+    })
+  }
+})
+
+// Get available specialties (for booking form)
+router.get('/specialties', async (req, res) => {
+  try {
+    const specialties = await Doctor.distinct('specialty', { isActive: true })
+    const formatted = specialties
+      .filter(Boolean)
+      .map((item) => item.trim())
+      .filter((item, index, arr) => item && arr.indexOf(item) === index)
+      .sort((a, b) => a.localeCompare(b, 'vi'))
+
+    res.json({
+      success: true,
+      data: formatted
+    })
+  } catch (error) {
+    console.error('Error fetching specialties:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Có lỗi xảy ra khi lấy danh sách chuyên khoa'
+    })
+  }
+})
+
+// Public doctor list for booking helper
+router.get('/providers', async (req, res) => {
+  try {
+    const doctors = await Doctor.find({ isActive: true })
+      .select('name specialty title experience')
+      .sort({ name: 1 })
+
+    res.json({
+      success: true,
+      data: doctors
+    })
+  } catch (error) {
+    console.error('Error fetching providers:', error)
+    res.status(500).json({
+      success: false,
+      message: 'Có lỗi xảy ra khi lấy danh sách bác sĩ'
     })
   }
 })

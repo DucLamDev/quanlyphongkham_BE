@@ -21,6 +21,15 @@ const appointmentSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Vui lòng chọn chuyên khoa']
   },
+  doctorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Doctor',
+    default: null
+  },
+  doctorName: {
+    type: String,
+    default: null
+  },
   appointmentDate: {
     type: Date,
     required: [true, 'Vui lòng chọn ngày khám']

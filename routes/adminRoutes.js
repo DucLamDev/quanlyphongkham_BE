@@ -1,4 +1,4 @@
-import express from 'express'
+                                                                                                                                                                                                                                                                import express from 'express'
 import jwt from 'jsonwebtoken'
 import Admin from '../models/Admin.js'
 import Appointment from '../models/Appointment.js'
@@ -166,6 +166,47 @@ router.patch('/appointments/:id/status', protect, async (req, res) => {
         success: false,
         message: 'Không tìm thấy lịch hẹn'
       })
+    }
+
+    // If appointment is completed, auto-create patient record
+    if (status === 'completed') {
+      try {
+        // Check if patient already exists
+        let patient = await Patient.findOne({ phone: appointment.phone })
+        
+        if (!patient) {
+          // Create new patient from appointment data
+          patient = new Patient({
+            fullName: appointment.fullName,
+            phone: appointment.phone,
+            email: appointment.email || undefined,
+            medicalHistory: [{
+              date: appointment.appointmentDate,
+              diagnosis: `Khám ${appointment.specialty}`,
+              treatment: appointment.notes || 'Đã khám',
+              doctor: appointment.doctorId,
+              notes: appointment.notes
+            }],
+            isActive: true
+          })
+          await patient.save()
+          console.log(`✅ Auto-created patient record for ${appointment.fullName}`)
+        } else {
+          // Update existing patient's medical history
+          patient.medicalHistory.push({
+            date: appointment.appointmentDate,
+            diagnosis: `Khám ${appointment.specialty}`,
+            treatment: appointment.notes || 'Đã khám',
+            doctor: appointment.doctorId,
+            notes: appointment.notes
+          })
+          await patient.save()
+          console.log(`✅ Updated medical history for patient ${appointment.fullName}`)
+        }
+      } catch (patientError) {
+        console.error('Error creating/updating patient:', patientError)
+        // Don't fail the appointment update if patient creation fails
+      }
     }
 
     res.json({
@@ -432,6 +473,157 @@ router.delete('/patients/:id', protect, authorize('admin'), async (req, res) => 
     res.status(500).json({
       success: false,
       message: 'Lỗi xóa bệnh nhân',
+      error: error.message
+    })
+  }
+})
+
+// ============ ANALYTICS ROUTES ============
+
+// Get analytics data
+router.get('/analytics', protect, async (req, res) => {
+  try {
+    const { range = 'month' } = req.query
+    
+    // Calculate date range
+    const now = new Date()
+    let startDate = new Date()
+    
+    if (range === 'week') {
+      startDate.setDate(now.getDate() - 7)
+    } else if (range === 'month') {
+      startDate.setMonth(now.getMonth() - 1)
+    } else if (range === 'year') {
+      startDate.setFullYear(now.getFullYear() - 1)
+    }
+    
+    // Get appointments in range
+    const appointments = await Appointment.find({
+      createdAt: { $gte: startDate, $lte: now }
+    })
+    
+    // Get previous period for comparison
+    const previousStart = new Date(startDate)
+    const previousEnd = new Date(startDate)
+    const diff = now - startDate
+    previousStart.setTime(previousStart.getTime() - diff)
+    
+    const previousAppointments = await Appointment.find({
+      createdAt: { $gte: previousStart, $lt: startDate }
+    })
+    
+    // Calculate metrics
+    const totalAppointments = appointments.length
+    const previousTotal = previousAppointments.length
+    const growthRate = previousTotal > 0
+      ? (((totalAppointments - previousTotal) / previousTotal) * 100).toFixed(1)
+      : 0
+    
+    const completed = appointments.filter(a => a.status === 'completed').length
+    const cancelled = appointments.filter(a => a.status === 'cancelled').length
+    
+    const completionRate = totalAppointments > 0
+      ? ((completed / totalAppointments) * 100).toFixed(1)
+      : 0
+    
+    const cancellationRate = totalAppointments > 0
+      ? ((cancelled / totalAppointments) * 100).toFixed(1)
+      : 0
+    
+    // Get unique patients (new patients)
+    const uniquePhones = [...new Set(appointments.map(a => a.phone))]
+    const newPatients = uniquePhones.length
+    
+    // Specialty distribution
+    const specialtyCount = {}
+    appointments.forEach(app => {
+      specialtyCount[app.specialty] = (specialtyCount[app.specialty] || 0) + 1
+    })
+    
+    const specialtyDistribution = Object.entries(specialtyCount)
+      .map(([specialty, count]) => ({
+        specialty,
+        count,
+        percentage: ((count / totalAppointments) * 100).toFixed(1)
+      }))
+      .sort((a, b) => b.count - a.count)
+    
+    // Peak hours analysis
+    const hourCount = {}
+    appointments.forEach(app => {
+      if (app.appointmentTime) {
+        const hour = parseInt(app.appointmentTime.split(':')[0])
+        hourCount[hour] = (hourCount[hour] || 0) + 1
+      }
+    })
+    
+    const peakHours = Object.entries(hourCount)
+      .map(([hour, count]) => ({ hour, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4)
+    
+    res.json({
+      success: true,
+      data: {
+        totalAppointments,
+        growthRate: parseFloat(growthRate),
+        newPatients,
+        completionRate: parseFloat(completionRate),
+        cancellationRate: parseFloat(cancellationRate),
+        specialtyDistribution,
+        peakHours
+      }
+    })
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi lấy dữ liệu phân tích',
+      error: error.message
+    })
+  }
+})
+
+// Export analytics to CSV
+router.get('/analytics/export', protect, async (req, res) => {
+  try {
+    const { range = 'month' } = req.query
+    
+    const now = new Date()
+    let startDate = new Date()
+    
+    if (range === 'week') {
+      startDate.setDate(now.getDate() - 7)
+    } else if (range === 'month') {
+      startDate.setMonth(now.getMonth() - 1)
+    } else if (range === 'year') {
+      startDate.setFullYear(now.getFullYear() - 1)
+    }
+    
+    const appointments = await Appointment.find({
+      createdAt: { $gte: startDate, $lte: now }
+    }).sort({ createdAt: -1 })
+    
+    // Create CSV
+    const headers = ['Ngày tạo', 'Họ tên', 'Số điện thoại', 'Chuyên khoa', 'Ngày khám', 'Giờ khám', 'Trạng thái']
+    const rows = appointments.map(app => [
+      new Date(app.createdAt).toLocaleDateString('vi-VN'),
+      app.fullName,
+      app.phone,
+      app.specialty,
+      new Date(app.appointmentDate).toLocaleDateString('vi-VN'),
+      app.appointmentTime,
+      app.status
+    ])
+    
+    const csv = [headers, ...rows].map(row => row.join(',')).join('\n')
+    
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename=analytics-${range}.csv`)
+    res.send('\uFEFF' + csv) // BOM for Excel UTF-8
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi xuất báo cáo',
       error: error.message
     })
   }
