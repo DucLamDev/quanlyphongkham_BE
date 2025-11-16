@@ -28,7 +28,7 @@ app.use(helmet({
 // CORS configuration - support multiple origins
 const allowedOrigins = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-  : ['http://localhost:3000']
+  : ['https://frontend-quanlyphongkham.vercel.app/']
 
 console.log('🔒 Allowed CORS origins:', allowedOrigins)
 
